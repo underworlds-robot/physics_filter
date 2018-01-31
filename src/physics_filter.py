@@ -3,14 +3,12 @@
 
 import pybullet as p
 import pybullet_data
-import time
 import rospy
-import sys
 import re
-import underworlds
 from physics_filter.msg import Pick, Release
 from underworlds.helpers.transformations import *
 from underworlds.helpers.geometry import *
+from underworlds.types import NEW, UPDATE
 
 EPSILON = 0.001
 
@@ -56,8 +54,6 @@ class PhysicsFilter(object):
         if node.type == MESH:
             # disable gravity for the node
             self.picked_ids.append(node.id)
-            # disable simulation for the node
-            node.properties["physics"] = False
             gripper_tf = get_world_transform(scene, gripper)
             node_tf = get_world_transform(scene, node)
             node.transform = numpy.dot(gripper_tf, node_tf.inverse())
@@ -72,8 +68,6 @@ class PhysicsFilter(object):
         if node.type == MESH:
             # disable gravity
             self.picked_ids.remove(node.id)
-            # enable simulation for the node
-            node.properties["physics"] = True
             # reparent to root
             node.transformation = get_world_transform(scene, node)
             node.parent = scene.rootnode.id
@@ -82,9 +76,10 @@ class PhysicsFilter(object):
     def update_bullet_nodes_id(self, nodes_ids):
         for node_id in nodes_ids:
             node = self.source.scene.node(node_id)
-            self.update_bullet_node(node)
+            if node.properties["physics"]:
+                self.update_bullet_node(node)
 
-    def update_uwds_nodes(self, nodes_ids):
+    def get_output_nodes(self, nodes_ids):
         nodes = []
         for node_id in nodes_ids:
             output_node = self.source.scene.node(node_id).copy()
@@ -93,7 +88,7 @@ class PhysicsFilter(object):
             else:
                 self.node_mapping[node_id] = output_node.id
 
-            if self.source.scene.node(node_id).properties["physics"] is True:
+            if self.source.scene.node(node_id).properties["physics"]:
                 t, q = p.getBasePositionAndOrientation(self.underworlds_to_bullet[node_id])
                 output_node.transformation = numpy.dot(translation_matrix(t), quaternion_matrix(q))
             nodes.append(output_node)
@@ -127,24 +122,28 @@ class PhysicsFilter(object):
                         # note : we need to apply this force for each step of simulation
                         p.applyExternalForce(self.underworlds_to_bullet[node.id], -1, [0, 0, 10], position, p.WORLD_FRAME)
         except Exception as e:
-            rospy.logwarn("[bullet_filter] Exception occurred : "+str(e))
+            rospy.logwarn("[physics_filter] Exception occurred : "+str(e))
 
-    def filter(self, updated_ids):
+    def filter(self, ids_to_update):
         # create the bullet model if not created and update poses in simulation
-        self.update_bullet_nodes_id(updated_ids)
+        self.update_bullet_nodes_id(ids_to_update)
 
         p.stepSimulation()  # perform the simulation step
 
         # then we compute the output poses of the filter
-        output_nodes = self.update_uwds_nodes(updated_ids)
+        output_nodes = self.get_output_nodes(ids_to_update)
 
         # finally we update the output world
         self.target.scene.nodes.update(output_nodes)
 
     def run(self):
         while not rospy.is_sutdown():
-            updated_ids = self.source.scene.waitforchanges()
-            self.filter(updated_ids)
+            changes = self.source.scene.waitforchanges()
+            ids_to_update = []
+            for node_id, invalidation in changes:
+                if invalidation == NEW or invalidation == UPDATE:
+                    ids_to_update.append(node_id)
+            self.filter(ids_to_update)
 
     def __del__(self):
         del self.target

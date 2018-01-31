@@ -1,0 +1,4 @@
+<launch>
+<node pkg="physics_filter" type="physics_filter.py" name="physics_filter"
+    args="base stable_base cube $(find laas_models)/models/objects/ 3.0" output="screen"/>
+</launch>
