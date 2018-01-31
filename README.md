@@ -29,7 +29,7 @@ cd ..
 catkin_make
 ```
 
-## ROS Services
+## ROS services
 `physics_filter/pick`: 
 
 `phyics_filter/release`:
@@ -38,7 +38,7 @@ catkin_make
 ## Underworlds situation produced
 `hold(X,Y)`: where X is an agent and Y an object
 
-## Underworlds event Produced
+## Underworlds events produced
 `pick(X,Y)`: where X is an agent and Y an object
 
 `release(X,Y)`: where X is an agent and Y an object
