@@ -13,7 +13,7 @@ import re
 from physics_filter.srv import Pick, Release
 from underworlds.helpers.transformations import *
 from underworlds.helpers.geometry import *
-from underworlds.types import NEW, UPDATE
+from underworlds.types import Situation
 
 EPSILON = 0.001
 
@@ -29,12 +29,15 @@ class PhysicsFilter(object):
         self.underworlds_to_bullet = {}
 
         self.update_table = {}
-        self.transforms = {}
+        self.input_transforms = {}
+        self.output_transforms = {}
+
+        self.situations = {}
 
         self.picked_ids = []
 
-        self.ros_services = {"pick": rospy.Service('pick', Pick, self.handle_pick),
-                             "release": rospy.Service('release', Release, self.handle_release)}
+        self.ros_services = {"pick": rospy.Service('physics_filter/pick', Pick, self.handle_pick),
+                             "release": rospy.Service('physics_filter/release', Release, self.handle_release)}
 
         self.physicsClient = p.connect(p.DIRECT) # initialize bullet non-graphical version
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -46,14 +49,34 @@ class PhysicsFilter(object):
         self.set_physics(regex)
         time.sleep(0.2)
 
+    def send_pick_event(self, node, gripper):
+        sit = Situation(desc="pick(%s,%s)" % (gripper.name, node.name)).isevent()
+        self.target.timeline.update(sit)
+
+    def send_release_event(self, node, gripper):
+        sit = Situation(desc="release(%s,%s)" % (gripper.name, node.name)).isevent()
+        self.target.timeline.update(sit)
+
+    def start_hold_fact(self, node, gripper):
+        sit = Situation(desc="hold(%s,%s)" % (gripper.name, node.name)).isevent()
+        self.situations["hold(%s,%s)" % (gripper.name, node.name)] = sit
+        self.target.timeline.update(sit)
+
+    def end_hold_fact(self, node, gripper):
+        sit = self.situations["hold(%s,%s)" % (gripper.name, node.name)]
+        self.target.timeline.end(sit)
+
     def set_physics(self, regex):
         for node in self.source.scene.nodes:
             if re.match(regex, node.name):
                 node.properties["physics"] = True
                 self.source.scene.nodes.update(node)
 
-    def handle_pick(self):
-        raise NotImplementedError
+    def handle_pick(self, req):
+        node = self.target.scene.nodebyname(req.object_name)[0]
+        gripper = self.target.scene.nodebyname(req.gripper_name)[0]
+        self.pick(self.target.scene, node, gripper)
+        return True
 
     def pick(self, scene, node, gripper):
         # check that the node is a mesh
@@ -65,11 +88,14 @@ class PhysicsFilter(object):
             node.transform = numpy.dot(gripper_tf, node_tf.inverse())
             node.parent = gripper.id
             scene.nodes.update(node)
+        self.send_pick_event(node, gripper)
+        self.start_hold_fact(node, gripper)
 
-    def handle_release(self):
-        raise NotImplementedError
+    def handle_release(self, req):
+        node = self.target.scene.nodebyname(req.object_name)[0]
+        self.release(self.target.scene, node)
 
-    def release(self, scene, node):
+    def release(self, scene, node, gripper):
         # check that the node is a mesh
         if node.type == MESH:
             # disable gravity
@@ -78,6 +104,8 @@ class PhysicsFilter(object):
             node.transformation = get_world_transform(scene, node)
             node.parent = scene.rootnode.id
             scene.nodes.update(node)
+        self.send_release_event(node, gripper)
+        self.end_hold_fact(node, gripper)
 
     def update_output_nodes(self, nodes_ids):
         nodes = []
@@ -90,19 +118,18 @@ class PhysicsFilter(object):
 
             if self.source.scene.nodes[node_id].properties["physics"]:
                 t, q = p.getBasePositionAndOrientation(self.underworlds_to_bullet[node_id])
-                t_list = list(t)
-                if t_list[2]<0:
-                    t_list[2]=0
-                t = tuple(t_list)
                 output_node.transformation = numpy.dot(translation_matrix(t), quaternion_matrix(q))
 
             if output_node.parent in self.node_mapping:
                 output_node.parent = self.node_mapping[output_node.parent]
-            if output_node.id in self.target.scene.nodes:
-                if not numpy.allclose(self.target.scene.nodes[output_node.id].transformation, get_world_transform(self.target.scene, output_node)):
-                    nodes.append(output_node)
-            else:
+
+            if output_node not in self.target.scene.nodes:
                 nodes.append(output_node)
+                self.output_transforms[node_id] = get_world_transform(self.target.scene, output_node)
+            else:
+                if not numpy.allclose(self.output_transforms[node_id], get_world_transform(self.target.scene, output_node), rtol=0, atol=EPSILON):
+                    nodes.append(output_node)
+                    self.output_transforms[node_id] = get_world_transform(self.target.scene, output_node)
         # finally we update the output world
         self.target.scene.nodes.update(nodes)
         return nodes
@@ -116,10 +143,10 @@ class PhysicsFilter(object):
             node = self.source.scene.nodes[node_id]
             if node.properties["physics"] is True:
                 if node.id not in self.underworlds_to_bullet:
-                    self.transforms[node.id] = get_world_transform(self.source.scene, node)
-                    t = translation_from_matrix(self.transforms[node.id])
+                    self.input_transforms[node.id] = get_world_transform(self.source.scene, node)
+                    t = translation_from_matrix(self.input_transforms[node.id])
                     start_position = [t[0], t[1], t[2]]
-                    r = euler_from_matrix(self.transforms[node.id], 'rxyz')
+                    r = euler_from_matrix(self.input_transforms[node.id], 'rxyz')
                     start_orientation = p.getQuaternionFromEuler([r[0],r[1],r[2]])
                     try:
                         self.underworlds_to_bullet[node.id] = p.loadURDF(str(node.name).split("-")[0]+".urdf", start_position, start_orientation)
@@ -128,14 +155,14 @@ class PhysicsFilter(object):
                         node.properties["physics"] = False
                         self.source.scene.nodes.update(node)
                 else:
-                    if not numpy.allclose(self.transforms[node.id], get_world_transform(self.source.scene, node), rtol=0, atol=EPSILON):
-                        self.transforms[node.id] = get_world_transform(self.source.scene, node)
-                        t = translation_from_matrix(self.transforms[node.id])
+                    if not numpy.allclose(self.input_transforms[node.id], get_world_transform(self.source.scene, node), rtol=0, atol=EPSILON):
+                        self.input_transforms[node.id] = get_world_transform(self.source.scene, node)
+                        t = translation_from_matrix(self.input_transforms[node.id])
                         position = [t[0], t[1], t[2]]
-                        r = euler_from_matrix(self.transforms[node.id], 'rxyz')
+                        r = euler_from_matrix(self.input_transforms[node.id], 'rxyz')
                         orientation = p.getQuaternionFromEuler([r[0], r[1], r[2]])
                         # reset velocity of the
-                        p.resetBaseVelocity(self.underworlds_to_bullet[node.id], [0.0, 0.0, 0.0])
+                        p.resetBaseVelocity(self.underworlds_to_bullet[node.id], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
                         p.resetBasePositionAndOrientation(self.underworlds_to_bullet[node.id], position, orientation)
                     if node.id in self.picked_ids:
                         # if node picked we apply an external force that will compensate gravity

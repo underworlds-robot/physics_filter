@@ -1,4 +1,5 @@
 #
-string object_id
+string object_name
+string gripper_name
 ---
 bool success
