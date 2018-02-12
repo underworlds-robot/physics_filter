@@ -1,6 +1,8 @@
 # Physics Filter
 Underworlds filter that use Bullet RT physics simulation to produce the near future of the intput world
 
+![PhysicsFilterExample](/img/physics_filter.png)
+
 ## Installation
 
 ### Dependencies
