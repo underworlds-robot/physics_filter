@@ -93,7 +93,8 @@ class PhysicsFilter(object):
 
     def handle_release(self, req):
         node = self.target.scene.nodebyname(req.object_name)[0]
-        self.release(self.target.scene, node)
+        gripper = self.target.scene.nodebyname(req.gripper_name)[0]
+        self.release(self.target.scene, node, gripper)
 
     def release(self, scene, node, gripper):
         # check that the node is a mesh
