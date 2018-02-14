@@ -31,19 +31,24 @@ cd ..
 catkin_make
 ```
 
-## ROS services
+## ROS 
+services avaible :
+
 `physics_filter/pick`: 
 
 `phyics_filter/release`:
 
-## Underworlds situation produced
+## Underworlds
+situations produced :
+
 `hold(X,Y)`: where X is an agent and Y an object
 
-## Underworlds events produced
+events produced :
+
 `pick(X,Y)`: where X is an agent and Y an object
 
 `release(X,Y)`: where X is an agent and Y an object
 
-### References
+## References
 
 todo
