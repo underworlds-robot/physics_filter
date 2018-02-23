@@ -95,6 +95,7 @@ class PhysicsFilter(object):
         node = self.target.scene.nodebyname(req.object_name)[0]
         gripper = self.target.scene.nodebyname(req.gripper_name)[0]
         self.release(self.target.scene, node, gripper)
+        return True
 
     def release(self, scene, node, gripper):
         # check that the node is a mesh
@@ -107,6 +108,7 @@ class PhysicsFilter(object):
             scene.nodes.update(node)
         self.send_release_event(node, gripper)
         self.end_hold_fact(node, gripper)
+        return True
 
     def update_output_nodes(self, nodes_ids):
         nodes = []
@@ -187,7 +189,6 @@ class PhysicsFilter(object):
             self.filter(ids_to_update)
 
     def __del__(self):
-        del self.target
         p.disconnect()
 
 if __name__ == '__main__':
