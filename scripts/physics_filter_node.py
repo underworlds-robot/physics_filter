@@ -32,6 +32,8 @@ class PhysicsFilter(object):
         self.input_transforms = {}
         self.output_transforms = {}
 
+        self.simulation_step = simulation_step
+
         self.situations = {}
 
         self.picked_ids = []
@@ -46,7 +48,8 @@ class PhysicsFilter(object):
         p.setAdditionalSearchPath(model_dir)
         p.setTimeStep(simulation_step)
 
-        self.set_physics(regex)
+        self.regex = regex
+        self.set_physics(self.regex)
         time.sleep(0.2)
 
     def send_pick_event(self, node, gripper):
@@ -119,18 +122,19 @@ class PhysicsFilter(object):
             else:
                 self.node_mapping[node_id] = output_node.id
 
-            if self.source.scene.nodes[node_id].properties["physics"]:
-                t, q = p.getBasePositionAndOrientation(self.underworlds_to_bullet[node_id])
-                output_node.transformation = numpy.dot(translation_matrix(t), quaternion_matrix(q))
+            if "physics" in self.source.scene.nodes[node_id].properties:
+                if self.source.scene.nodes[node_id].properties["physics"] is True:
+                    t, q = p.getBasePositionAndOrientation(self.underworlds_to_bullet[node_id])
+                    output_node.transformation = numpy.dot(translation_matrix(t), quaternion_matrix(q))
 
             if output_node.parent in self.node_mapping:
                 output_node.parent = self.node_mapping[output_node.parent]
 
             if output_node not in self.target.scene.nodes:
                 nodes.append(output_node)
-                self.output_transforms[node_id] = get_world_transform(self.target.scene, output_node)
+                self.output_transforms[node_id] = output_node.transformation
             else:
-                if not numpy.allclose(self.output_transforms[node_id], get_world_transform(self.target.scene, output_node), rtol=0, atol=EPSILON):
+                if not numpy.allclose(self.output_transforms[node_id], output_node.transformation, rtol=0, atol=EPSILON):
                     nodes.append(output_node)
                     self.output_transforms[node_id] = get_world_transform(self.target.scene, output_node)
         # finally we update the output world
@@ -144,7 +148,7 @@ class PhysicsFilter(object):
         """
         for node_id in nodes_ids:
             node = self.source.scene.nodes[node_id]
-            if node.properties["physics"] is True:
+            if re.match(self.regex, node.name):
                 if node.id not in self.underworlds_to_bullet:
                     self.input_transforms[node.id] = get_world_transform(self.source.scene, node)
                     t = translation_from_matrix(self.input_transforms[node.id])
@@ -170,14 +174,15 @@ class PhysicsFilter(object):
                     if node.id in self.picked_ids:
                         # if node picked we apply an external force that will compensate gravity
                         # note : we need to apply this force for each step of simulation
+                        p.resetBaseVelocity(self.underworlds_to_bullet[node.id], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
                         p.applyExternalForce(self.underworlds_to_bullet[node.id], -1, [0, 0, 10], position, p.WORLD_FRAME)
 
     def filter(self, ids_to_update):
+        self.set_physics(self.regex)
         # create the bullet model if not created and update poses in simulation
         self.update_bullet_nodes(ids_to_update)
-
-        p.stepSimulation()  # perform the simulation step
-
+        for x in range(0,100,1):
+            p.stepSimulation()  # perform the simulation step
         # then we compute the output poses of the filter
         self.update_output_nodes(ids_to_update)
 
